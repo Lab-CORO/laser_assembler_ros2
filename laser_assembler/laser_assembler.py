@@ -19,6 +19,8 @@ import open3d as o3d
 import math
 import threading
 
+from .laser_scan_to_array import laserscan_to_array
+
 try:
     import ros2_numpy
 except ImportError:
@@ -30,18 +32,8 @@ def laserscan_to_xyz(laserscan_msg):
     Convert LaserScan to an Nx3 NumPy array of [x, y, z=0].
     Invalid ranges (inf or out of [range_min, range_max]) are discarded.
     """
-    angle = laserscan_msg.angle_min
-    points = []
-
-    for r in laserscan_msg.ranges:
-        if laserscan_msg.range_min <= r <= laserscan_msg.range_max:
-            x = r * math.cos(angle)
-            y = r * math.sin(angle)
-            z = 0.0
-            points.append([x, y, z])
-        angle += laserscan_msg.angle_increment
-    
-    return np.array(points, dtype=np.float32)
+    scan_np = laserscan_to_array(laserscan_msg)
+    return scan_np 
 
 class LaserAssemblerNode(Node):
     def __init__(self):
@@ -78,21 +70,8 @@ class LaserAssemblerNode(Node):
         # Optional: Which frame to transform everything into
         self.global_frame = 'r_robot'
 
-                # ----- Pose setup -----
-        self.lidar_pose = TransformStamped()
-        self.lidar_pose.header.frame_id = 'lidar_frame'
-        self.lidar_pose.child_frame_id = 'slamware_map'
-
-        self.br3 = tf2_ros.TransformBroadcaster(self)
-
-        # A simple timer to continuously broadcast the lidar pose & re-publish last pointcloud
-        # self._timer = self.create_timer(0.1, self.timer_callback)
-
         self.get_logger().info('LaserAssemblerNode initialized.')
 
-    def timer_callback(self):
-        self.lidar_pose.header.stamp = self.get_clock().now().to_msg()
-        self.br3.sendTransform(self.lidar_pose)
 
     def scan_callback(self, scan_msg: LaserScan):
         """
@@ -111,9 +90,9 @@ class LaserAssemblerNode(Node):
         # Attempt to get the transform from the scan frame to the global frame
         try:
             transform_stamped = self.tf_buffer.lookup_transform(
-                self.global_frame,                # target frame
-                scan_msg.header.frame_id,         # source frame
-                rclpy.time.Time(seconds=0)        # or scan_msg.header.stamp if TF is in sync
+                scan_msg.header.frame_id,
+                self.global_frame,
+                rclpy.time.Time()        # or scan_msg.header.stamp if TF is in sync
             )
         except tf2_ros.LookupException as e:
             self.get_logger().error(f'TF LookupException: {str(e)}')
@@ -134,6 +113,10 @@ class LaserAssemblerNode(Node):
 
         # Transform to global frame
         local_pcd.transform(T)
+
+        # TEST rotation 90 selon Y
+        R = local_pcd.get_rotation_matrix_from_xyz((0, 0, np.pi))
+        local_pcd.rotate(R, center=(0, 0, 0))
 
         # Store in our list
         # with self.buffer_lock:
