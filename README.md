@@ -1,102 +1,81 @@
-# **Laser Assembler Node**
+# **laser_assembler**
 
-Ce nœud ROS 2 (`laser_assembler`) souscrit à un topic `LaserScan`, transforme les scans en nuages de points et les accumule au fil du temps. Il fournit un service permettant d’assembler tous les nuages accumulés en un seul message `PointCloud2`.
+Assemble une succession de balayages `LaserScan` 2D en un nuage de points 3D (`PointCloud2`) exprimé dans un repère fixe (`r_robot` par défaut).
+
+Le package fournit :
+
+- **`ScanAssembler`** (`laser_assembler/scan_assembler.py`) : une classe Python à utiliser directement dans votre node. **C'est ce que le laboratoire utilise.** Aucun service ni executor multi-thread requis.
+- **`laser_assembler`** (node, facultatif) : enveloppe ROS autour de `ScanAssembler` (topic + service `assemble_cloud`).
 
 ---
 
 ## **Dépendances**
 
-Assurez-vous d’avoir les dépendances suivantes installées :
-
 ```bash
-pip install ros2_numpy open3d scipy
-```
-
-En plus, installez les paquets ROS 2 nécessaires :
-
-```bash
-sudo apt install ros-${ROS_DISTRO}-tf-transformations
+pip install numpy scipy
+sudo apt install ros-${ROS_DISTRO}-tf2-ros-py
 ```
 
 ---
 
-## **Topics & Services**
+## **Utilisation de la classe ScanAssembler**
 
-### **Topics souscrits**
-- `/perception/transformed_scan` (`sensor_msgs/LaserScan`) : Données brutes du laser scanner.
+Pour chaque scan, la classe lit dans TF la transformation `fixed_frame ← frame du scan` (au temps du scan), transforme les points, puis les stocke.
 
-### **Services fournis**
-- `assemble_cloud` (`encodeur/AssembleCloud`) : Assemble tous les nuages accumulés en un seul `PointCloud2`.
+```python
+import tf2_ros
+from laser_assembler.scan_assembler import ScanAssembler
+
+# dans le constructeur de votre node
+# spin_thread=True : le buffer reste a jour meme si un callback long (action) occupe le node
+self.tf_buffer = tf2_ros.Buffer()
+self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
+self.assembler = ScanAssembler(self.tf_buffer, fixed_frame='r_robot')
+
+# pour chaque nouveau balayage (le frame_id du scan doit etre celui diffuse dans TF)
+self.assembler.add_scan(scan_msg)          # False si TF indisponible
+
+# a la fin du balayage
+cloud = self.assembler.to_pointcloud2()    # sensor_msgs/PointCloud2 dans r_robot
+self.assembler.clear()                     # pret pour un nouveau balayage
+```
+
+| Membre | Rôle |
+|---|---|
+| `ScanAssembler(tf_buffer, fixed_frame='r_robot', max_scans=None)` | `max_scans` borne le nombre de scans gardés (tampon circulaire) |
+| `add_scan(scan)` | Ajoute un `LaserScan` ; ignore les points `inf`/hors portée |
+| `to_pointcloud2(stamp=None)` | Fusionne tous les scans en un `PointCloud2` |
+| `clear()` | Vide le tampon |
+| `n_scans`, `n_points` | Taille du tampon |
 
 ---
 
-## **Utilisation**
+## **Node facultatif**
 
-### **1. Compiler le package**
-
-Assurez-vous que votre espace de travail ROS 2 est bien configuré, puis compilez le package :
-
-```bash
-cd ~/ros2_ws
-colcon build --packages-select <nom_du_package>
-source install/setup.bash
-```
-
-### **2. Lancer le nœud**
-
-Exécutez le nœud avec :
+Souscrit à `/perception/transformed_scan` (`sensor_msgs/LaserScan`) et offre le service `assemble_cloud` (`encodeur/AssembleCloud`), qui retourne le nuage accumulé puis vide le tampon.
 
 ```bash
 ros2 run laser_assembler laser_assembler
-```
-
-### **3. Appeler le service**
-
-Pour assembler les nuages accumulés, appelez le service :
-
-```bash
 ros2 service call /assemble_cloud encodeur/srv/AssembleCloud
 ```
 
 ---
 
-## **Configuration**
-
-- Le nœud transforme les données `LaserScan` entrantes dans le repère `r_robot`. Vous pouvez modifier cela en changeant la variable `self.global_frame` dans la classe `LaserAssemblerNode`.
-- Il utilise `tf2_ros` pour obtenir les transformations et nécessite une diffusion correcte des TF depuis votre configuration robotique.
-- Le nœud utilise Open3D pour la gestion des nuages de points.
-
----
-
-## **Remarques**
-
-- Vérifiez que votre arborescence TF est bien configurée et que la transformation du laser vers `r_robot` est disponible.
-- Si `ros2_numpy` n’est pas installé, vous pouvez l’installer avec :
+## **Tests**
 
 ```bash
-pip install ros2_numpy
+cd laser_assembler_ros2
+python3 -m pytest test/test_scan_assembler.py
 ```
 
 ---
 
 ## **Dépannage**
 
-- Si le nœud ne reçoit aucun message `LaserScan`, vérifiez que le topic est bien publié :
+- Si `add_scan` retourne `False`, la transformation TF `r_robot → <frame du scan>` n'existe pas encore :
 
 ```bash
-ros2 topic list
+ros2 run tf2_ros tf2_echo r_robot laser
 ```
 
-- En cas d’erreur de transformation TF, assurez-vous que la transformation existe :
-
-```bash
-ros2 run tf2_ros tf2_echo <frame_cible> <frame_source>
-```
-
-- Consultez les logs pour voir les erreurs :
-
-```bash
-ros2 run <nom_du_package> laser_assembler --ros-args --log-level debug
-```
-
----
+- Si le nuage semble retourné de 180°, vérifiez la transformation diffusée (matrice `^R T_L` du Jalon 1), pas l'assembleur : celui-ci applique exactement la TF lue.

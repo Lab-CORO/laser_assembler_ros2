@@ -46,6 +46,9 @@ def laserscan_to_array(
     )
     ranges = np.array(scan.ranges, dtype="f4")
     intensities = np.array(scan.intensities, dtype="f4")
+    if intensities.shape[0] != n_points:
+        # Certains lidars ne publient pas d'intensites
+        intensities = np.zeros(n_points, dtype="f4")
     if remove_invalid_ranges:
         indices_invalid_range = (
             np.isinf(ranges)
