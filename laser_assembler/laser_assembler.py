@@ -13,7 +13,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import LaserScan
 
-from encodeur.srv import AssembleCloud
+from jerro_msgs.srv import AssembleCloud
 
 from .scan_assembler import ScanAssembler
 
@@ -24,8 +24,11 @@ class LaserAssemblerNode(Node):
 
         self.buffer_lock = threading.Lock()
         self.tf_buffer = tf2_ros.Buffer()
-        # spin_thread=True : add_scan peut attendre la TF sans bloquer sa reception
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
+        # Node et thread dedies au listener : add_scan peut attendre la TF sans bloquer sa
+        # reception (un meme node dans deux executors ne recoit plus /tf sous Humble)
+        self.tf_node = rclpy.create_node('laser_assembler_tf')
+        self.tf_listener = tf2_ros.TransformListener(
+            self.tf_buffer, self.tf_node, spin_thread=True)
         self.assembler = ScanAssembler(self.tf_buffer, fixed_frame='r_robot')
 
         qos_profile = QoSProfile(

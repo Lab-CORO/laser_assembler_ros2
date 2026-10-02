@@ -27,9 +27,12 @@ import tf2_ros
 from laser_assembler.scan_assembler import ScanAssembler
 
 # dans le constructeur de votre node
-# spin_thread=True : le buffer reste a jour meme si un callback long (action) occupe le node
+# Le listener a son propre node et son propre thread : le buffer reste a jour meme si un
+# callback long (action) occupe votre node. Ne pas lui passer `self` (le meme node se
+# retrouverait dans deux executors et TF ne serait plus mis a jour sous Humble).
 self.tf_buffer = tf2_ros.Buffer()
-self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self, spin_thread=True)
+self.tf_node = rclpy.create_node('mon_node_tf')
+self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self.tf_node, spin_thread=True)
 self.assembler = ScanAssembler(self.tf_buffer, fixed_frame='r_robot')
 
 # pour chaque nouveau balayage (le frame_id du scan doit etre celui diffuse dans TF)
